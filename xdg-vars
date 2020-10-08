@@ -1,0 +1,174 @@
+#!/bin/sh
+#
+# $0: Copyright (c) 2020 H. MUller, hxmuller@gmail.com
+# SPDX-License-Identifier: MIT
+#
+# This script checks, sets, and removes XDG base directory
+# variables (XDG vars). The variables are set to a known
+# value which are used in the constants shown below.
+#
+# Usage: $0 -c { -s | -S | -u | -U }
+#
+# Arguments:
+#   -d  Display XDG vars
+#   -s  Set XDG vars for the system
+#   -u  Set XDG vars for the user
+#   -S  Remove XDG vars for the system
+#   -U  REmove XDG vars for the user
+#
+# Reference:
+#   https://specifications.freedesktop.org/basedir-spec/\
+#                               basedir-spec-latest.html
+#
+# XDG vars:
+# - XDG_CACHE_HOME
+# - XDG_CONFIG_HOME
+# - XDG_CONFIG_DIRS
+# - XDG_DATA_DIRS
+# - XDG_DATA_HOME
+# - XDG_RUNTIME_DIR
+#
+# XDG_RUNTIME_DIR is set by pam_systemd.so (Debian package 
+# libpam-systemd).
+#
+# This script:
+#   * will not change the value of XDG_RUNTIME_DIR
+#   * assumes that it will be run on systemd based install
+#   * assumes bash is installed and is the primary shell
+#   * should ideally be run for the system prior to adding 
+#     users
+
+CACHE_HOME=\$HOME/.cache
+CONFIG_HOME=\$HOME/.config
+CONFIG_DIRS=/etc/xdg
+DATA_DIRS=/usr/local/share/:/usr/share/
+DATA_HOME=\$HOME/.local/share
+
+SYSTEM_BASHRC=/etc/skel/.bashrc
+USER_BASHRC=$HOME/.bashrc
+
+usage() {
+    echo "Usage: $0 -c { -s | -S | -u | -U }"
+    echo ""
+    echo "Arguments:"
+    echo "  -d  Display XDG vars"
+    echo "  -s  Set XDG vars for the system"
+    echo "  -u  set XDG vars for the user"
+    echo "  -S  Remove XDG vars for the system"
+    echo "  -U  Remove XDG vars for the user"
+    echo ""
+    echo "The system arguments must be run as root and are"
+    echo "mutually exclusive of the user arguments"
+    exit 1
+}
+
+success() {
+    local what=""
+    if test "$1" = "system"; then
+        what=$SYSTEM_BASHRC
+    else 
+        what=$USER_BASHRC
+    fi
+    eval echo "$what has been successfully modified"
+    echo "Logout and login for changes to take effect"
+}
+
+not_root() {
+    echo "Must be root to run option for the system"
+    exit 1
+}
+
+not_user() {
+    echo "Must be user to run option for the user"
+    exit 1
+}
+
+check_vars() {
+    local vars="XDG_CACHE_HOME \
+                XDG_CONFIG_HOME \
+                XDG_CONFIG_DIRS \
+                XDG_DATA_DIRS \
+                XDG_DATA_HOME \
+                XDG_RUNTIME_DIR"
+
+    for var in $vars; do
+        eval echo ${var}=\$$var
+    done
+}
+
+set_vars() {
+    local where=""
+    if test "$1" = "system"; then
+        if test $( id -u ) -eq 0; then
+            where=$SYSTEM_BASHRC
+        else
+            not_root
+        fi
+    else
+        if test $( id -u ) -ge 1000; then
+            where=$USER_BASHRC
+        else
+            not_user
+        fi
+    fi
+    # This sed statement removes all blank lines at EOF
+    sed -i -e :a -e '/^\n*$/{$d;N;};/\n$/ba' $where
+    echo "" >> $where
+    echo "# XDG base directory variables" >> $where
+    echo "XDG_CACHE_HOME=$CACHE_HOME" >> $where
+    echo "XDG_CONFIG_HOME=$CONFIG_HOME" >> $where
+    echo "XDG_CONFIG_DIRS=$CONFIG_DIRS" >> $where
+    echo "XDG_DATA_DIRS=$DATA_DIRS" >> $where
+    echo "XDG_DATA_HOME=$DATA_HOME" >> $where
+    success $1
+}
+
+rm_vars() {
+    local where=""
+    if test "$1" = "system"; then
+        if test $( id -u ) -eq 0; then
+            where=$SYSTEM_BASHRC
+        else
+            not_root
+        fi
+    else
+        if test $( id -u ) -ge 1000; then
+            where=$USER_BASHRC
+        else
+            not_user
+        fi
+    fi
+    # This sed statement removes the empty line between
+    # the XDG variables and the previous statement block
+    sed -i '/^$/{N;s/\n\(\# XDG base directory variables\)/\1/}' $where
+    sed -i '/XDG base directory variables/d' $where
+    sed -i '/XDG_CACHE_HOME/d' $where
+    sed -i '/XDG_CONFIG_HOME/d' $where
+    sed -i '/XDG_CONFIG_DIRS/d' $where
+    sed -i '/XDG_DATA_DIRS/d' $where
+    sed -i '/XDG_DATA_HOME/d' $where
+    success $1
+}
+
+if test $# = 0; then
+    usage
+fi
+
+while getopts dsSuU arg
+do
+        case $arg in
+        d)  check_vars;;
+        s)  set_vars system;;
+        u)  set_vars user;;
+        S)  rm_vars system;;
+        U)  rm_vars user;;
+        \?)  usage;;
+        esac
+done
+shift `expr $OPTIND - 1`
+
+# This deletes empty line between non-empty line and match
+# sed '/^$/{N;s/\n\(\XDG_CACHE_HOME\)/\1/}' file
+
+# This deletes empty lines at end of file
+# sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba' file
